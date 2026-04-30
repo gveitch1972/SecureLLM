@@ -1,0 +1,9 @@
+*.pdf
+*.pages
+*.txt
+.claude/
+.DS_Store
+__pycache__/
+*.pyc
+*.pyo
+.env
