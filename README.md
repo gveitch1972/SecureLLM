@@ -1,5 +1,7 @@
 # SecureLLM
 
+**[Architecture diagram →](https://grahamveitch.com/securellm/)**
+
 AI access gateway that routes between cloud LLMs (OpenAI) and local models (Ollama), with centralised auth, logging, and vendor-agnostic clients. Built for scenarios where sensitive data must stay on-premise while general queries use cloud inference.
 
 **Status: in progress**
