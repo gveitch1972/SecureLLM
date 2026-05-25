@@ -1,4 +1,17 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
+
+function ThinkingTimer() {
+  const [sec, setSec] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setSec(s => s + 1), 1000);
+    return () => clearInterval(t);
+  }, []);
+  return (
+    <div style={{ color: '#555', fontSize: 13, fontVariantNumeric: 'tabular-nums' }}>
+      Thinking… ({sec}s)
+    </div>
+  );
+}
 
 export default function ChatWindow({ messages, onSend, disabled }) {
   const [input, setInput] = useState('');
@@ -36,10 +49,10 @@ export default function ChatWindow({ messages, onSend, disabled }) {
             {m.content}
           </div>
         ))}
-        {loading && <div style={{ color: '#555', fontSize: 13 }}>Thinking…</div>}
+        {loading && <ThinkingTimer />}
         <div ref={bottomRef} />
       </div>
-      <div style={{ padding: '12px 20px', borderTop: '1px solid #222', display: 'flex', gap: 8 }}>
+      <div style={{ padding: '12px 16px', borderTop: '1px solid #222', display: 'flex', gap: 8, boxSizing: 'border-box' }}>
         <textarea
           value={input}
           onChange={e => setInput(e.target.value)}
@@ -48,8 +61,8 @@ export default function ChatWindow({ messages, onSend, disabled }) {
           placeholder={disabled ? 'Session not active' : 'Message (Enter to send)'}
           rows={2}
           style={{
-            flex: 1, background: '#1a1a1a', border: '1px solid #333', borderRadius: 6,
-            color: '#e8e8e8', padding: '8px 12px', fontSize: 14, resize: 'none',
+            flex: 1, minWidth: 0, background: '#1a1a1a', border: '1px solid #333', borderRadius: 6,
+            color: '#e8e8e8', padding: '8px 12px', fontSize: 16, resize: 'none',
             fontFamily: 'inherit',
           }}
         />

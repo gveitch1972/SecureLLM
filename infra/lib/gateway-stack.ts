@@ -3,6 +3,7 @@ import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as apigateway from 'aws-cdk-lib/aws-apigateway';
+import * as ssm from 'aws-cdk-lib/aws-ssm';
 import { Construct } from 'constructs';
 
 interface GatewayStackProps extends cdk.StackProps {
@@ -37,13 +38,18 @@ exports.handler = async (event) => {
       const i = existing[0];
       return { statusCode: 200, headers: CORS, body: JSON.stringify({ status: i.State.Name, instanceId: i.InstanceId, privateIp: i.PrivateIpAddress }) };
     }
-    const result = await client.send(new RunInstancesCommand({
-      MinCount: 1, MaxCount: 1,
-      LaunchTemplate: { LaunchTemplateName: process.env.LAUNCH_TEMPLATE_NAME, Version: '$Latest' },
-      TagSpecifications: [{ ResourceType: 'instance', Tags: [{ Key: 'Name', Value: TAG }] }],
-    }));
-    const i = result.Instances[0];
-    return { statusCode: 200, headers: CORS, body: JSON.stringify({ status: 'starting', instanceId: i.InstanceId, privateIp: i.PrivateIpAddress }) };
+    try {
+      const result = await client.send(new RunInstancesCommand({
+        MinCount: 1, MaxCount: 1,
+        LaunchTemplate: { LaunchTemplateName: process.env.LAUNCH_TEMPLATE_NAME, Version: '$Latest' },
+        TagSpecifications: [{ ResourceType: 'instance', Tags: [{ Key: 'Name', Value: TAG }] }],
+      }));
+      const i = result.Instances[0];
+      return { statusCode: 200, headers: CORS, body: JSON.stringify({ status: 'starting', instanceId: i.InstanceId, privateIp: i.PrivateIpAddress }) };
+    } catch (err) {
+      const code = err.Code || err.name || 'LaunchFailed';
+      return { statusCode: 503, headers: CORS, body: JSON.stringify({ error: err.message, code }) };
+    }
   }
 
   if (method === 'GET' && path === '/session') {
@@ -67,13 +73,14 @@ exports.handler = async (event) => {
 const PROXY_CODE = `
 const http = require('http');
 const CORS = { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Content-Type,x-api-key,x-private-ip' };
+const FASTAPI_KEY = process.env.FASTAPI_KEY || '';
 
 function call(method, privateIp, path, body) {
   return new Promise((resolve, reject) => {
     const data = body ? JSON.stringify(body) : null;
     const opts = {
       hostname: privateIp, port: 8000, path,
-      method, headers: { 'Content-Type': 'application/json' },
+      method, headers: { 'Content-Type': 'application/json', 'x-api-key': FASTAPI_KEY },
     };
     if (data) opts.headers['Content-Length'] = Buffer.byteLength(data);
     const req = http.request(opts, res => {
@@ -89,7 +96,8 @@ function call(method, privateIp, path, body) {
 }
 
 exports.handler = async (event) => {
-  const privateIp = (event.headers || {})['x-private-ip'];
+  const hdrs = event.headers || {};
+  const privateIp = hdrs['x-private-ip'];
   if (!privateIp) return { statusCode: 400, headers: CORS, body: JSON.stringify({ error: 'x-private-ip header required' }) };
 
   const path = event.resource;
@@ -102,6 +110,11 @@ exports.handler = async (event) => {
     }
     if (method === 'POST' && path === '/chat') {
       const res = await call('POST', privateIp, '/chat', JSON.parse(event.body || '{}'));
+      return { statusCode: res.statusCode, headers: CORS, body: res.body };
+    }
+    if (method === 'GET' && path === '/result/{jobId}') {
+      const jobId = (event.pathParameters || {}).jobId;
+      const res = await call('GET', privateIp, '/result/' + jobId, null);
       return { statusCode: res.statusCode, headers: CORS, body: res.body };
     }
     return { statusCode: 404, headers: CORS, body: JSON.stringify({ error: 'not found' }) };
@@ -131,6 +144,7 @@ export class GatewayStack extends cdk.Stack {
     }));
 
     // Proxy: IN VPC — reaches EC2 private IP on :8000
+    const fastapiKey = ssm.StringParameter.valueFromLookup(this, '/secure-llm/api-key');
     const proxyFn = new lambda.Function(this, 'ProxyFn', {
       functionName: 'secure-llm-proxy',
       runtime: lambda.Runtime.NODEJS_22_X,
@@ -141,6 +155,7 @@ export class GatewayStack extends cdk.Stack {
       vpcSubnets: { subnetType: ec2.SubnetType.PUBLIC },
       allowPublicSubnet: true,
       securityGroups: [props.lambdaSg],
+      environment: { FASTAPI_KEY: fastapiKey },
     });
 
     // API Gateway with API key auth
@@ -175,6 +190,10 @@ export class GatewayStack extends cdk.Stack {
 
     const chat = api.root.addResource('chat');
     chat.addMethod('POST', proxyInt, keyRequired);
+
+    const result = api.root.addResource('result');
+    const resultJob = result.addResource('{jobId}');
+    resultJob.addMethod('GET', proxyInt, keyRequired);
 
     new cdk.CfnOutput(this, 'ApiUrl', { value: api.url });
     new cdk.CfnOutput(this, 'ApiKeyId', { value: apiKey.keyId, description: 'Retrieve value: aws apigateway get-api-key --api-key <id> --include-value' });

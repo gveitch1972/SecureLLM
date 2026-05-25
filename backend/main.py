@@ -1,20 +1,26 @@
-import os
+import os, uuid, asyncio, time, subprocess, urllib.request
 import httpx
-from fastapi import FastAPI, HTTPException, Header
+from fastapi import FastAPI, HTTPException, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
 
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 API_KEY = os.getenv("API_KEY", "")
+IDLE_TIMEOUT = int(os.getenv("IDLE_TIMEOUT_SECS", "120"))
 
 app = FastAPI(title="Secure LLM Gateway")
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+jobs = {}
+last_activity = time.time()
+
+
+@app.middleware("http")
+async def track_activity(request: Request, call_next):
+    global last_activity
+    last_activity = time.time()
+    return await call_next(request)
 
 
 def check_key(key: Optional[str]) -> None:
@@ -28,7 +34,7 @@ class Message(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    model: str = "llama3:8b"
+    model: str = "llama3.2:1b"
     messages: List[Message]
 
 
@@ -45,17 +51,58 @@ async def models(x_api_key: Optional[str] = Header(default=None)):
         return r.json()
 
 
-@app.post("/chat")
-async def chat(req: ChatRequest, x_api_key: Optional[str] = Header(default=None)):
-    check_key(x_api_key)
-    async with httpx.AsyncClient(timeout=120.0) as c:
-        r = await c.post(
-            f"{OLLAMA_URL}/api/chat",
-            json={
+async def run_inference(job_id: str, req: ChatRequest):
+    try:
+        async with httpx.AsyncClient(timeout=300.0) as c:
+            r = await c.post(f"{OLLAMA_URL}/api/chat", json={
                 "model": req.model,
                 "messages": [m.model_dump() for m in req.messages],
                 "stream": False,
-            },
-        )
-        r.raise_for_status()
-        return r.json()
+            })
+            r.raise_for_status()
+            jobs[job_id] = {"status": "done", "result": r.json()}
+    except Exception as e:
+        jobs[job_id] = {"status": "error", "error": str(e)}
+
+
+@app.post("/chat")
+async def chat(req: ChatRequest, x_api_key: Optional[str] = Header(default=None)):
+    check_key(x_api_key)
+    job_id = str(uuid.uuid4())
+    jobs[job_id] = {"status": "pending"}
+    asyncio.create_task(run_inference(job_id, req))
+    return {"jobId": job_id}
+
+
+@app.get("/result/{job_id}")
+async def result(job_id: str, x_api_key: Optional[str] = Header(default=None)):
+    check_key(x_api_key)
+    return jobs.get(job_id, {"status": "not_found"})
+
+
+async def idle_watchdog():
+    await asyncio.sleep(30)  # startup grace period
+    while True:
+        await asyncio.sleep(10)
+        if time.time() - last_activity > IDLE_TIMEOUT:
+            try:
+                token_req = urllib.request.Request(
+                    "http://169.254.169.254/latest/api/token",
+                    headers={"X-aws-ec2-metadata-token-ttl-seconds": "21600"},
+                    method="PUT",
+                )
+                token = urllib.request.urlopen(token_req, timeout=2).read().decode()
+                iid_req = urllib.request.Request(
+                    "http://169.254.169.254/latest/meta-data/instance-id",
+                    headers={"X-aws-ec2-metadata-token": token},
+                )
+                instance_id = urllib.request.urlopen(iid_req, timeout=2).read().decode()
+                subprocess.Popen(["aws", "ec2", "terminate-instances",
+                                  "--instance-ids", instance_id, "--region", "eu-west-2"])
+            except Exception:
+                pass  # retry next cycle
+
+
+@app.on_event("startup")
+async def startup():
+    asyncio.create_task(idle_watchdog())

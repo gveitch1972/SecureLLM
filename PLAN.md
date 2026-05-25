@@ -1,93 +1,129 @@
-# Secure LLM / localLLM — Plan
+# Secure LLM — Plan
 
 ## What it is
 
-Secure AI access gateway. Single entry point routing between external LLM (OpenAI/Azure) and local LLM (Ollama). Centralised logging, prompt control, vendor-agnostic clients.
+Enterprise-grade private AI inference. All queries processed inside your AWS VPC — no data ever reaches an external LLM. Single cold-start demo that proves the pattern.
 
-Should have been named **localLLM** — that better describes the core value (local model routing for sensitive data).
+**Core pitch:** "Your staff get an AI assistant. Your data never leaves your infrastructure."
 
 ## Problem it solves
 
-- Sensitive data leakage to external APIs
-- No centralised control over prompts/responses
-- No audit trail
-- Vendor lock-in
+| Problem | How we solve it |
+|---------|----------------|
+| Sensitive data leaking to OpenAI/Azure | All inference on local Ollama (EC2 inside VPC) |
+| No audit trail on AI usage | Every query + response logged (CloudWatch) |
+| No control over what staff can ask | Input guardrail blocks PII before it hits the model |
+| Vendor lock-in to cloud LLMs | Swap model in one place — clients unchanged |
 
 ## Architecture
 
 ```
-Client layer (n8n / Telegram / UI)
-        ↓
-Gateway API (FastAPI)
-        ↓
-Routing layer (rule-based → policy engine)
-   ↙               ↘
-External LLM      Local LLM (Ollama)
-(OpenAI/Azure)    (sensitive data / offline)
-        ↓
-Memory/storage (Databricks tables)
+User (browser)
+      ↓ HTTPS
+CloudFront → S3 (React UI)
+      ↓ API key
+API Gateway (eu-west-2)
+      ↓
+orchestratorFn (Lambda, not in VPC)  ← RunInstances / session management
+      ↓
+proxyFn (Lambda, in VPC)
+      ↓
+  [INPUT GUARDRAIL]          ← PII scan — block + log if triggered
+      ↓ (clean only)
+FastAPI on EC2 (VPC, no inbound except Lambda SG on :8000)
+      ↓
+Ollama (llama3:8b, CPU or GPU)
+      ↓
+  [OUTPUT GUARDRAIL]         ← strip PII echoed in response, log audit trail
+      ↓
+User gets response
 ```
 
-## Core components
+No NAT Gateway. EC2 egress = 443 only (S3 via VPC endpoint for model cache). No SSH — SSM only.
 
-| Component | Purpose |
-|-----------|---------|
-| Gateway API | Single entry point — `/chat`, `/completion`. Validation, auth, logging, routing. |
-| Routing layer | Rule-based initially (keywords/flags). Future: policy engine, cost-aware, sensitivity classification. |
-| External provider | OpenAI / Azure OpenAI — general queries, high-quality responses. |
-| Local model | Ollama — sensitive data, offline, private processing. |
-| Memory layer | Databricks tables — prompts, responses, metadata (timestamp, provider, user). |
-| Integration layer | n8n workflows, Telegram bot, future dashboards. |
+## What is built
+
+- [x] CDK 5-stack deploy: Network, Storage, Compute, Gateway, Hosting
+- [x] Cold-start flow: Start Session → EC2 launches → Ollama boots → FastAPI → Ready
+- [x] Boot checklist UI: 5-stage live progress in the browser
+- [x] S3 model cache: llama3:8b persists across boots (fast restart)
+- [x] API key auth at API Gateway + FastAPI
+- [x] Error handling: Launch failed state surfaced to UI (quota errors etc.)
+- [x] Self-terminating instance (trap EXIT in boot script)
+
+## What is next
+
+### Phase 0 — Access control (TOP PRIORITY)
+- [ ] **Per-user API key auth** — React shows passcode entry screen before chat UI. User enters their key, stored in `localStorage`, sent as `x-api-key`. API GW usage plan validates it. Individual keys can be revoked, rate-limited, monitored per user.
+  - Create API GW usage plan + associate existing API
+  - Generate keys via CLI: `aws apigateway create-api-key --name "user-name" --enabled`
+  - Add passcode screen component to React (simple — one input, submit, store in localStorage)
+  - Remove hardcoded `VITE_API_KEY` from env — key comes from user input instead
+  - Send keys to trusted users by email/message
+
+### Phase 1 — Smoke test (unblocked now)
+- [x] Confirm t3.large boot completes end-to-end (20GB EBS now deployed)
+- [x] Send a chat message, get a response (llama3.2:1b, ~1-5s on CPU)
+- [ ] Verify S3 model cache populates (fast second boot)
+- [ ] **FastAPI process supervisor** — uvicorn crashes silently after use; run under systemd so it auto-restarts. Add to user-data script in compute-stack.ts:
+  ```
+  cat > /etc/systemd/system/fastapi.service << EOF
+  [Unit]
+  After=network.target
+  [Service]
+  WorkingDirectory=/opt/secure-llm
+  ExecStart=/usr/bin/python3 -m uvicorn main:app --host 0.0.0.0 --port 8000
+  Restart=always
+  RestartSec=3
+  [Install]
+  WantedBy=multi-user.target
+  EOF
+  systemctl enable --now fastapi
+  ```
+
+### Phase 2 — GPU (blocked on AWS quota)
+- [ ] Submit On-Demand G quota increase: `aws service-quotas request-service-quota-increase --service-code ec2 --quota-code L-DB2E81BA --desired-value 8 --region eu-west-2`
+- [ ] Switch LaunchTemplate back to g4dn.xlarge + DLAMI + `--gpus all`
+- [ ] Test response speed (GPU vs CPU — significant difference)
+
+### Phase 3 — Guardrails (enterprise value add)
+- [ ] **Input guardrail** in proxyFn: scan prompt with AWS Comprehend for PII (names, NI numbers, dates of birth, bank details, NHS numbers). Block + log if confidence > threshold. Return "Sensitive data detected" to user.
+- [ ] **Output guardrail** in FastAPI: regex-strip common PII patterns from model response before returning. Log full audit record (timestamp, user session, matched patterns if any).
+- [ ] CloudWatch log group `/secure-llm/audit` — structured JSON per request
+- [ ] UI: show "Guardrail active" badge so demo audience can see it
+
+### Phase 4 — Portfolio / commercial
+- [ ] Add to grahamveitch.com project page (copy already written)
+- [ ] Demo walkthrough video: Start → boot checklist → chat → guardrail trigger
+- [ ] Pricing model: per-seat SaaS or on-prem deployment fee
 
 ## Tech stack
 
 | Layer | Tech |
 |-------|------|
-| API Gateway | FastAPI |
-| Orchestration | n8n |
-| External LLM | OpenAI / Azure OpenAI |
-| Local LLM | Ollama |
-| Data layer | Databricks |
-| Hosting (future) | Azure Container Apps |
+| Infra | AWS CDK (TypeScript), 5 stacks, eu-west-2 |
+| Compute | EC2 t3.large (CPU smoke test) → g4dn.xlarge (GPU, pending quota) |
+| Model runtime | Ollama (llama3:8b) |
+| Gateway | FastAPI + uvicorn on EC2 |
+| Orchestration | Two Lambdas (orchestrator outside VPC, proxy inside VPC) |
+| Frontend | React + Vite → CloudFront + S3 |
+| Model cache | S3 (gv-ml-assets-313753089884, prefix secure-llm/ollama/) |
+| PII detection | AWS Comprehend (Phase 3) |
+| Audit logging | CloudWatch Logs (Phase 3) |
 
-## Phase 1 — MVP
+## Live endpoints
 
-- [ ] Gateway API running locally
-- [ ] Basic rule-based routing
-- [ ] External LLM connected (OpenAI or Azure)
-- [ ] Local LLM connected (Ollama)
-- [ ] All interactions logged
-- [ ] n8n connected via HTTP
+- Frontend: https://securellm.grahamveitch.com
+- API: https://yktpme09qf.execute-api.eu-west-2.amazonaws.com/prod
+- API key: in SSM `/secure-llm/api-key`
 
-Out of scope for MVP: embeddings, RAG, fine-tuning, complex auth.
+## Security story (for demo/pitch)
 
-## Phase 2 — Enhancements
+1. EC2 SG: inbound only from Lambda SG on :8000. No internet inbound.
+2. EC2 egress: 443 only. S3 via VPC gateway endpoint (free, no internet).
+3. No SSH. SSM only (auditable, no key management).
+4. API key at API Gateway + FastAPI.
+5. (Phase 3) Input guardrail blocks PII before it reaches the model.
+6. (Phase 3) Full audit trail in CloudWatch.
 
-- [ ] API key / JWT auth
-- [ ] Prompt filtering / redaction
-- [ ] RAG context from Databricks
-- [ ] Cost tracking per request
-- [ ] Observability dashboard
-
-## Phase 3 — Enterprise
-
-- Private deployment (Azure VNet / Container Apps)
-- Full audit logging + compliance
-- RBAC
-- Model performance monitoring
-- Multi-tenant
-
-## Strategic positioning
-
-Treat as **enabler layered on Tier 1 projects** — not a standalone product. Wire financial-signals-lakehouse and Personal Janitor through the gateway to demonstrate real usage. That's the portfolio story: "all AI calls go through a governed, auditable layer I built."
-
-## Success criteria
-
-- All AI calls routable through gateway
-- Provider switch without changing clients
-- Full visibility: inputs, outputs, usage
-- Demonstrable "secure AI" pattern for portfolio / commercial use
-
-## Status
-
-Planned. Existing code in folder: `llm_clients.py`, `README.md`. Previous thinking in `openAIProject.txt` and PDFs.
+**One-liner:** "The model runs in your VPC. The guardrail stops sensitive data reaching it. You get an audit log of everything."

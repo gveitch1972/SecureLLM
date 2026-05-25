@@ -18,6 +18,7 @@ const compute = new ComputeStack(app, 'SecureLlmComputeStack', {
   vpc: network.vpc,
   ec2Sg: network.ec2Sg,
   modelBucket: storage.modelBucket,
+  publicSubnetId: network.publicSubnetId,
 });
 
 new GatewayStack(app, 'SecureLlmGatewayStack', {
