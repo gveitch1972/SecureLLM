@@ -1,0 +1,12 @@
+{
+  "availability-zones:account=313753089884:region=eu-west-2": [
+    "eu-west-2a",
+    "eu-west-2b",
+    "eu-west-2c"
+  ],
+  "hosted-zone:account=313753089884:domainName=grahamveitch.com:region=us-east-1": {
+    "Id": "/hostedzone/Z04772761JEX39DPHWP64",
+    "Name": "grahamveitch.com."
+  },
+  "ami:account=313753089884:filters.image-type.0=machine:filters.name.0=Deep Learning OSS Nvidia Driver AMI GPU PyTorch 2.9 (Amazon Linux 2023)*:filters.state.0=available:owners.0=amazon:region=eu-west-2": "ami-07bbfeeb4e87c2c04"
+}

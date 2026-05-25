@@ -21,10 +21,10 @@ export class HostingStack extends cdk.Stack {
       domainName: 'grahamveitch.com',
     });
 
-    const cert = new acm.DnsValidatedCertificate(this, 'Cert', {
+    // Stack deploys to us-east-1 — CloudFront cert requirement satisfied
+    const cert = new acm.Certificate(this, 'Cert', {
       domainName: 'securellm.grahamveitch.com',
-      hostedZone,
-      region: 'us-east-1',
+      validation: acm.CertificateValidation.fromDns(hostedZone),
     });
 
     const distribution = new cloudfront.Distribution(this, 'Cdn', {

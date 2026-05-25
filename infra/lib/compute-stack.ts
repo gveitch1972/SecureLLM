@@ -43,7 +43,7 @@ export class ComputeStack extends cdk.Stack {
 
     // DLAMI: NVIDIA driver, Docker, nvidia-container-toolkit pre-installed
     const ami = ec2.MachineImage.lookup({
-      name: 'Deep Learning OSS Nvidia Driver AMI GPU PyTorch 2.5 (Amazon Linux 2023)*',
+      name: 'Deep Learning OSS Nvidia Driver AMI GPU PyTorch 2.9 (Amazon Linux 2023)*',
       owners: ['amazon'],
     });
 

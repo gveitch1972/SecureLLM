@@ -139,6 +139,7 @@ export class GatewayStack extends cdk.Stack {
       code: lambda.Code.fromInline(PROXY_CODE),
       vpc: props.vpc,
       vpcSubnets: { subnetType: ec2.SubnetType.PUBLIC },
+      allowPublicSubnet: true,
       securityGroups: [props.lambdaSg],
     });
 
