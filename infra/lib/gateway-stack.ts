@@ -144,6 +144,7 @@ export class GatewayStack extends cdk.Stack {
     }));
 
     // Proxy: IN VPC — reaches EC2 private IP on :8000
+    // SSM param must be type String (not SecureString) — valueFromLookup returns ciphertext for SecureStrings
     const fastapiKey = ssm.StringParameter.valueFromLookup(this, '/secure-llm/api-key');
     const proxyFn = new lambda.Function(this, 'ProxyFn', {
       functionName: 'secure-llm-proxy',
