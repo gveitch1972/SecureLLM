@@ -1,5 +1,7 @@
-import os, uuid, asyncio, time, subprocess, urllib.request
+import logging, os, sys, uuid, asyncio, time, subprocess, urllib.request
 import httpx
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 from fastapi import FastAPI, HTTPException, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -96,10 +98,17 @@ def _terminate():
             headers={"X-aws-ec2-metadata-token": token},
         )
         instance_id = urllib.request.urlopen(iid_req, timeout=2).read().decode()
-        subprocess.Popen(["aws", "ec2", "terminate-instances",
-                          "--instance-ids", instance_id, "--region", "eu-west-2"])
-    except Exception:
-        pass
+        logging.info("watchdog: terminating %s", instance_id)
+        result = subprocess.run(
+            ["aws", "ec2", "terminate-instances", "--instance-ids", instance_id, "--region", "eu-west-2"],
+            capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode != 0:
+            logging.error("watchdog: terminate-instances failed: %s", result.stderr)
+            sys.exit(1)  # fallback: kill the process so the instance shuts down via shutdown behavior
+    except Exception as e:
+        logging.error("watchdog: _terminate error: %s", e)
+        sys.exit(1)
 
 
 async def idle_watchdog():
@@ -109,6 +118,8 @@ async def idle_watchdog():
         idle = time.time() - last_activity
         age = time.time() - BOOT_TIME
         if idle > IDLE_TIMEOUT or age > MAX_SESSION:
+            reason = "max_session" if age > MAX_SESSION else "idle"
+            logging.info("watchdog: triggering shutdown (reason=%s idle=%.0fs age=%.0fs)", reason, idle, age)
             _terminate()
 
 
