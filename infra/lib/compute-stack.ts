@@ -93,10 +93,9 @@ from typing import List, Optional
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 API_KEY = os.getenv("API_KEY", "")
 IDLE_TIMEOUT = int(os.getenv("IDLE_TIMEOUT_SECS", "120"))
+MAX_SESSION = int(os.getenv("MAX_SESSION_SECS", "1800"))
 
-app = FastAPI(title="Secure LLM Gateway")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
-
+BOOT_TIME = time.time()
 jobs = {}
 last_activity = time.time()
 
@@ -155,27 +154,32 @@ async def result(job_id: str, x_api_key: Optional[str] = Header(default=None)):
     check_key(x_api_key)
     return jobs.get(job_id, {"status": "not_found"})
 
+def _terminate():
+    try:
+        token_req = urllib.request.Request(
+            "http://169.254.169.254/latest/api/token",
+            headers={"X-aws-ec2-metadata-token-ttl-seconds": "21600"},
+            method="PUT",
+        )
+        token = urllib.request.urlopen(token_req, timeout=2).read().decode()
+        iid_req = urllib.request.Request(
+            "http://169.254.169.254/latest/meta-data/instance-id",
+            headers={"X-aws-ec2-metadata-token": token},
+        )
+        instance_id = urllib.request.urlopen(iid_req, timeout=2).read().decode()
+        subprocess.Popen(["aws", "ec2", "terminate-instances",
+                          "--instance-ids", instance_id, "--region", "eu-west-2"])
+    except Exception:
+        pass
+
 async def idle_watchdog():
     await asyncio.sleep(30)
     while True:
         await asyncio.sleep(10)
-        if time.time() - last_activity > IDLE_TIMEOUT:
-            try:
-                token_req = urllib.request.Request(
-                    "http://169.254.169.254/latest/api/token",
-                    headers={"X-aws-ec2-metadata-token-ttl-seconds": "21600"},
-                    method="PUT",
-                )
-                token = urllib.request.urlopen(token_req, timeout=2).read().decode()
-                iid_req = urllib.request.Request(
-                    "http://169.254.169.254/latest/meta-data/instance-id",
-                    headers={"X-aws-ec2-metadata-token": token},
-                )
-                instance_id = urllib.request.urlopen(iid_req, timeout=2).read().decode()
-                subprocess.Popen(["aws", "ec2", "terminate-instances",
-                                  "--instance-ids", instance_id, "--region", "eu-west-2"])
-            except Exception:
-                pass
+        idle = time.time() - last_activity
+        age = time.time() - BOOT_TIME
+        if idle > IDLE_TIMEOUT or age > MAX_SESSION:
+            _terminate()
 
 @app.on_event("startup")
 async def startup():
