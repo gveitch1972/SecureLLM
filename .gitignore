@@ -11,4 +11,5 @@ node_modules/
 infra/dist/
 infra/cdk.out/
 infra/cdk.out2/
+infra/cdk.context.json
 frontend/dist/

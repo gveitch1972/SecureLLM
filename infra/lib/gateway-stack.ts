@@ -168,10 +168,25 @@ export class GatewayStack extends cdk.Stack {
       },
     });
 
-    const plan = api.addUsagePlan('UsagePlan', { name: 'secure-llm-plan' });
+    // Free tier: shared key baked into frontend bundle — quota limits anonymous abuse
+    const plan = api.addUsagePlan('UsagePlan', {
+      name: 'secure-llm-free',
+      quota: { limit: 50, period: apigateway.Period.DAY },
+      throttle: { rateLimit: 2, burstLimit: 5 },
+    });
     const apiKey = api.addApiKey('ApiKey', { apiKeyName: 'secure-llm-key' });
     plan.addApiKey(apiKey);
     plan.addApiStage({ api, stage: api.deploymentStage });
+
+    // Named tier: individual keys Graham generates for trusted users
+    const namedPlan = api.addUsagePlan('NamedPlan', {
+      name: 'secure-llm-named',
+      quota: { limit: 200, period: apigateway.Period.DAY },
+      throttle: { rateLimit: 10, burstLimit: 20 },
+    });
+    namedPlan.addApiStage({ api, stage: api.deploymentStage });
+
+    new cdk.CfnOutput(this, 'NamedPlanId', { value: namedPlan.usagePlanId, description: 'Add new keys: aws apigateway create-api-key --name <user> --enabled && aws apigateway create-usage-plan-key --usage-plan-id <id> --key-id <key-id> --key-type API_KEY' });
 
     const keyRequired = { apiKeyRequired: true };
     const orchestratorInt = new apigateway.LambdaIntegration(orchestratorFn);
