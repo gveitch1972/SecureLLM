@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import SessionControl, { BootChecklist } from './components/SessionControl.jsx';
 import ChatWindow from './components/ChatWindow.jsx';
 

@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 
 const STAGES = [
-  { id: 'launched', label: 'Instance launched',         detail: 'EC2 instance requested from AWS…',           expectedMs:  5000 },
-  { id: 'running',  label: 'Instance running',          detail: 'Waiting for OS to initialise…',              expectedMs: 45000 },
-  { id: 'runtime',  label: 'Installing Ollama runtime', detail: 'Downloading Ollama binary, starting server…', expectedMs: 80000 },
-  { id: 'model',    label: 'Loading llama3.2:1b',       detail: 'Pulling model weights into memory…',         expectedMs: 30000 },
-  { id: 'gateway',  label: 'Secure gateway ready',      detail: 'Starting FastAPI — pinging /health…',        expectedMs: 120000 },
+  { id: 'launched', label: 'Instance launched', activeLabel: 'Requesting instance…',  detail: 'EC2 instance requested from AWS…',            expectedMs:  5000 },
+  { id: 'running',  label: 'Instance running',  activeLabel: 'Instance booting…',     detail: 'Waiting for OS to initialise…',               expectedMs: 45000 },
+  { id: 'runtime',  label: 'Ollama ready',      activeLabel: 'Installing Ollama…',    detail: 'Downloading Ollama binary, starting server…',  expectedMs: 80000 },
+  { id: 'model',    label: 'Model loaded',      activeLabel: 'Loading model…',        detail: 'Pulling model weights into memory…',           expectedMs: 30000 },
+  { id: 'gateway',  label: 'Gateway ready',     activeLabel: 'Starting gateway…',     detail: 'Starting FastAPI — pinging /health…',          expectedMs: 120000 },
 ];
 
 function lerpColor(a, b, t) {
@@ -71,7 +71,7 @@ export function BootChecklist({ bootStages }) {
             </span>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
               <span style={{ fontSize: 12, letterSpacing: '0.03em', color: done ? '#22c55e' : active ? '#f59e0b' : '#333' }}>
-                {s.label}
+                {active ? s.activeLabel : s.label}
               </span>
               {active && <ActiveStageDetail detail={s.detail} expectedMs={s.expectedMs} />}
             </div>

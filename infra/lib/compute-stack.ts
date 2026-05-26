@@ -182,9 +182,14 @@ async def startup():
     asyncio.create_task(idle_watchdog())
 PYEOF
 
-export API_KEY=$(aws ssm get-parameter --name /secure-llm/api-key --with-decryption --query Parameter.Value --output text --region $REGION 2>/dev/null || echo "")
-cd /opt/secure-llm && nohup python3 -m uvicorn main:app --host 0.0.0.0 --port 8000 >> $LOG 2>&1 &
+API_KEY=$(aws ssm get-parameter --name /secure-llm/api-key --with-decryption --query Parameter.Value --output text --region $REGION 2>/dev/null || echo "")
+echo "API_KEY=$API_KEY" > /etc/secure-llm.env
+chmod 600 /etc/secure-llm.env
 
+printf '[Unit]\\nDescription=Secure LLM FastAPI\\nAfter=network.target\\n\\n[Service]\\nWorkingDirectory=/opt/secure-llm\\nEnvironmentFile=/etc/secure-llm.env\\nExecStart=/usr/bin/python3 -m uvicorn main:app --host 0.0.0.0 --port 8000\\nRestart=always\\nRestartSec=3\\n\\n[Install]\\nWantedBy=multi-user.target\\n' > /etc/systemd/system/fastapi.service
+
+systemctl daemon-reload
+systemctl enable --now fastapi
 echo "=== Gateway ready ==="
 `;
 
