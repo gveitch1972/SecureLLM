@@ -95,7 +95,7 @@ export default function SessionControl({ session, bootStages, onStart, onStop })
         </span>
       )}
       {status === 'error' && (
-        <span style={{ fontSize: 13, color: '#ef4444' }} title={error}>Launch failed</span>
+        <span style={{ fontSize: 13, color: '#ef4444' }}>Launch failed — {error}</span>
       )}
       {busy && (
         <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: '#f59e0b' }}>

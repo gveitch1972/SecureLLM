@@ -62,7 +62,15 @@ export default function App() {
     try {
       const res = await fetch(`${API_URL}/session`, { method: 'POST', headers: mkHeaders() });
       data = await res.json();
-      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      if (!res.ok) {
+        const msg = data.message || data.error || `HTTP ${res.status}`;
+        const friendly = msg === 'Limit Exceeded'
+          ? 'Daily request limit reached — resets at midnight UTC'
+          : msg === 'Forbidden'
+          ? 'API key invalid or missing'
+          : msg;
+        throw new Error(friendly);
+      }
     } catch (err) {
       setSession({ status: 'error', error: err.message, privateIp: null, instanceId: null });
       return;
